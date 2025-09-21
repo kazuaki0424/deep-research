@@ -5,8 +5,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Dict
 
-from research import Researcher
-from analyze_claude import DeepAnalyzer
+from .research import Researcher
+from .analyze_claude import DeepAnalyzer
 
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "public"))
 LANG = os.getenv("LANGUAGE", "ja-JP")
