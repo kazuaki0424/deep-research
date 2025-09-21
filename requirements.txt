@@ -1,0 +1,9 @@
+anthropic>=0.34.2
+python-dotenv>=1.0.1
+tavily-python>=0.3.5
+trafilatura>=1.12.2
+requests>=2.32.3
+pydantic>=2.8.2
+PyYAML>=6.0.2
+markdown2>=2.4.12
+feedgen>=1.0.0

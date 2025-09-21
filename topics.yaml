@@ -1,0 +1,28 @@
+topics:
+  - title: "AIエージェントの最新動向"
+    query: "AI agents research frameworks applications"
+    day: "Mon"
+
+  - title: "フィンテックの革新と規制"
+    query: "fintech payments blockchain regulation"
+    day: "Tue"
+
+  - title: "量子コンピュータのビジネスインパクト"
+    query: "quantum computing industry applications"
+    day: "Wed"
+
+  - title: "ロボティクスと自動化の未来"
+    query: "robotics automation industry use cases"
+    day: "Thu"
+
+  - title: "AI市場の週間レビュー"
+    query: "AI industry weekly roundup"
+    day: "Fri"
+
+  - title: "週末ホットトピック"
+    query: "latest technology news OR emerging tech OR breakthrough innovation"
+    day: "Sat"
+
+  - title: "週末ホットトピック"
+    query: "technology trends OR future tech OR disruptive innovation"
+    day: "Sun"
