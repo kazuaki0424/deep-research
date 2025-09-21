@@ -2,8 +2,8 @@ from __future__ import annotations
 import os
 from typing import List, Dict
 from anthropic import Anthropic
+from anthropic._exceptions import NotFoundError
 
-# Claude への指示（ビジネスレポート風・深掘り重視）
 ANALYSIS_SYSTEM = (
     "あなたは一流のアナリスト兼編集者です。"
     "与えられた資料をもとに、日本語で『深掘り分析メモ（ビジネスレポート風）』を作成します。"
@@ -12,7 +12,6 @@ ANALYSIS_SYSTEM = (
     "本文中に [1] のように出典番号を差し込み、最後に出典一覧を付与してください。"
 )
 
-# プロンプト（ユーザー側の入力として与えるテンプレート）
 USER_TMPL = """
 # テーマ
 {theme}
@@ -27,31 +26,38 @@ USER_TMPL = """
 """
 
 def format_sources(docs: List[Dict]) -> str:
-    """Tavilyで収集した資料を、Claudeが参照しやすい文字列に整形。"""
     out = []
     for i, d in enumerate(docs, start=1):
-        title = d.get("title", "")
-        url = d.get("url", "")
-        content = d.get("content", "")[:700]  # 抜粋は700字まで
-        out.append(f"[{i}] {title} — {url}\n抜粋:\n{content}")
+        out.append(f"[{i}] {d.get('title','')} — {d.get('url','')}\n抜粋:\n{d.get('content','')[:700]}")
     return "\n\n".join(out)
 
 class DeepAnalyzer:
-    def __init__(self, api_key: str | None = None, model: str = "claude-3-sonnet-20240229"):
+    def __init__(self, api_key: str | None = None, model: str | None = None):
         self.client = Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
-        self.model = model
+        # 優先順に試す
+        self.candidate_models = [
+            model or "claude-3-sonnet-20240229",
+            "claude-3-haiku-20240307",
+            "claude-3-opus-20240229",
+        ]
 
-
-    def analyze(self, theme: str, docs: List[Dict]) -> str:
-        sources_block = format_sources(docs)
+    def _try_call(self, model: str, theme: str, sources_block: str) -> str:
         msg = self.client.messages.create(
-            model=self.model,
+            model=model,
             max_tokens=4000,
             temperature=0.5,
             system=ANALYSIS_SYSTEM,
             messages=[{"role": "user", "content": USER_TMPL.format(theme=theme, sources=sources_block)}],
         )
-        # 返却は text パーツを連結
-        return "".join(
-            [part.text for part in msg.content if getattr(part, "type", None) == "text"]
-        ) or ""
+        return "".join([p.text for p in msg.content if getattr(p, "type", None) == "text"]) or ""
+
+    def analyze(self, theme: str, docs: List[Dict]) -> str:
+        sources_block = format_sources(docs)
+        last_err = None
+        for m in self.candidate_models:
+            try:
+                return self._try_call(m, theme, sources_block)
+            except NotFoundError as e:
+                last_err = e  # 次の候補へ
+        # すべてダメだった場合は明示的に失敗させる
+        raise RuntimeError(f"No available Anthropic model for this API key. Last error: {last_err}")
