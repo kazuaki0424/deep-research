@@ -3,13 +3,16 @@ import os
 from typing import List, Dict
 from anthropic import Anthropic
 
+# Claude への指示（ビジネスレポート風・深掘り重視）
 ANALYSIS_SYSTEM = (
-  "あなたは一流のアナリスト兼編集者です。"
-  "与えられた資料をもとに、日本語で『深掘り分析メモ（ビジネスレポート風）』を作成します。"
-  "単なる要約ではなく、因果関係、多視点の比較、反証可能性、リスク、将来シナリオ、ビジネス/社会的含意を必須とします。"
-  "本文中に [1] のように出典番号を差し込み、最後に出典一覧を付与してください。"
+    "あなたは一流のアナリスト兼編集者です。"
+    "与えられた資料をもとに、日本語で『深掘り分析メモ（ビジネスレポート風）』を作成します。"
+    "単なる要約ではなく、因果関係、多視点の比較、反証可能性、リスク、将来シナリオ、"
+    "ビジネス/社会的含意を必須とします。"
+    "本文中に [1] のように出典番号を差し込み、最後に出典一覧を付与してください。"
 )
 
+# プロンプト（ユーザー側の入力として与えるテンプレート）
 USER_TMPL = """
 # テーマ
 {theme}
@@ -24,14 +27,18 @@ USER_TMPL = """
 """
 
 def format_sources(docs: List[Dict]) -> str:
+    """Tavilyで収集した資料を、Claudeが参照しやすい文字列に整形。"""
     out = []
     for i, d in enumerate(docs, start=1):
-        out.append(f"[{i}] {d.get('title','')} — {d.get('url','')}
-抜粋:
-{d.get('content','')[:700]}")
+        title = d.get("title", "")
+        url = d.get("url", "")
+        content = d.get("content", "")[:700]  # 抜粋は700字まで
+        out.append(f"[{i}] {title} — {url}\n抜粋:\n{content}")
     return "\n\n".join(out)
 
 class DeepAnalyzer:
+    """Claudeに深掘り分析を依頼してMarkdownを返すクラス。"""
+
     def __init__(self, api_key: str | None = None, model: str = "claude-3-5-sonnet-latest"):
         self.client = Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
         self.model = model
@@ -43,6 +50,9 @@ class DeepAnalyzer:
             max_tokens=4000,
             temperature=0.5,
             system=ANALYSIS_SYSTEM,
-            messages=[{"role":"user","content": USER_TMPL.format(theme=theme, sources=sources_block)}]
+            messages=[{"role": "user", "content": USER_TMPL.format(theme=theme, sources=sources_block)}],
         )
-        return "".join([p.text for p in msg.content if getattr(p,'type',None)=="text"]) or ""
+        # 返却は text パーツを連結
+        return "".join(
+            [part.text for part in msg.content if getattr(part, "type", None) == "text"]
+        ) or ""
