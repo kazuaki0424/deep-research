@@ -3,18 +3,21 @@ from __future__ import annotations
 import os, sys, re, json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Tuple, Optional
 
 # 相対インポート（python -m src.main_article で動く）
 from .research import Researcher
 from .analyze_claude import DeepAnalyzer
 import markdown2
+import yaml
 
 # ===== 基本設定（.envで上書き可） =====
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "public"))
 LANG = os.getenv("LANGUAGE", "ja-JP")
 TOPICS_FILE = Path("topics.yaml")
-TIMEZONE_HOURS = 9  # JST
+TIMEZONE_HOURS = int(os.getenv("TIMEZONE_HOURS", "9"))  # JSTがデフォルト
+# 週末テーマの環境変数（カンマ区切り）。topics.yaml側があればそちら優先
+ENV_WEEKEND_TOPICS = [s.strip() for s in os.getenv("WEEKEND_TOPICS", "").split(",") if s.strip()]
 
 # ===== ユーティリティ =====
 def now_local():
@@ -23,26 +26,48 @@ def now_local():
 def ensure_dir(p: Path):
     p.mkdir(parents=True, exist_ok=True)
 
-def load_topics() -> List[str]:
-    """topics.yaml は以下のどちらでもOK:
-    - [AI, フィンテック, 量子, ロボティクス]
-    - { topics: [AI, フィンテック, ...] }
+def _read_topics_yaml() -> Tuple[List[str], List[str]]:
     """
-    import yaml
-    if not TOPICS_FILE.exists():
-        print(f"[warn] topics.yaml not found, fallback to default topic", file=sys.stderr)
-        return ["テクノロジー総覧"]
-    with TOPICS_FILE.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    topics = data.get("topics") if isinstance(data, dict) else data
-    if not isinstance(topics, list) or not topics:
-        return ["テクノロジー総覧"]
-    return [str(t) for t in topics if t]
+    topics.yaml 仕様（後方互換）:
+    - 旧: [AI, フィンテック, 量子, ロボティクス]
+    - 新: { topics: [...], weekend_topics: [...] }
+    weekend_topics が無い場合は環境変数 WEEKEND_TOPICS、さらに無ければ ["AI戦略"] を利用
+    """
+    topics: List[str] = []
+    weekend_topics: List[str] = []
 
-def pick_today_topic(topics: List[str]) -> str:
+    if TOPICS_FILE.exists():
+        with TOPICS_FILE.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        if isinstance(data, dict):
+            topics = [str(t) for t in (data.get("topics") or []) if t]
+            weekend_topics = [str(t) for t in (data.get("weekend_topics") or []) if t]
+        elif isinstance(data, list):
+            topics = [str(t) for t in data if t]
+    # フォールバック
+    if not topics:
+        topics = ["テクノロジー総覧"]
+    if not weekend_topics:
+        weekend_topics = ENV_WEEKEND_TOPICS or ["AI戦略"]
+    return topics, weekend_topics
+
+def load_topics() -> List[str]:
+    # 既存インターフェイス維持（他から呼ばれる可能性に配慮）
+    topics, _ = _read_topics_yaml()
+    return topics
+
+def pick_today_topic(topics: List[str], weekend_topics: Optional[List[str]] = None) -> str:
+    """
+    平日: topics を曜日ローテーション
+    週末(土日): weekend_topics からローテーション（固定技術テーマを想定）
+    """
+    weekday = now_local().weekday()  # 0=Mon ... 6=Sun
+    weekend_topics = weekend_topics or ["AI戦略"]
+    if weekday >= 5:  # 土日
+        return weekend_topics[(weekday - 5) % len(weekend_topics)]
     if not topics:
         return "テクノロジー総覧"
-    return topics[now_local().weekday() % len(topics)]
+    return topics[weekday % len(topics)]
 
 def safe_slug(s: str) -> str:
     return "".join(ch for ch in s if ch.isalnum() or ch in "-_").strip() or "topic"
@@ -97,7 +122,14 @@ def rebuild_articles_index():
         return
 
     def label(p: Path) -> str:
-        # ファイル名（stem）をラベルに。必要なら本文タイトルを抽出してもOK
+        # HTMLタイトルを抽出（<title>...</title>）できれば優先。失敗時はファイル名
+        try:
+            txt = p.read_text(encoding="utf-8", errors="ignore")
+            m = re.search(r"<title>(.*?)</title>", txt, re.IGNORECASE | re.DOTALL)
+            if m:
+                return re.sub(r"\s+", " ", m.group(1).strip())
+        except Exception:
+            pass
         return p.stem
 
     lis = "\n".join(f"<li><a href='./{p.name}'>{label(p)}</a></li>" for p in pages)
@@ -114,16 +146,20 @@ def main():
     print("[info] start main_article")
     ensure_dir(OUTPUT_DIR / "articles")
 
-    # 1) テーマ決定（ローテーション）
-    topics = load_topics()
-    theme = pick_today_topic(topics)
+    # 1) テーマ決定（平日=ローテーション / 週末=固定技術テーマ）
+    topics, weekend_topics = _read_topics_yaml()
+    theme = pick_today_topic(topics, weekend_topics=weekend_topics)
     print(f"[info] theme = {theme}")
 
     # 2) 情報収集（Tavily）
     tavily_key = os.getenv("TAVILY_API_KEY")
     if not tavily_key:
         print("[error] TAVILY_API_KEY is missing.", file=sys.stderr)
-        md = f"# {theme}\n\nTavily の API キーが未設定です。Settings → Secrets → Actions に `TAVILY_API_KEY` を追加してください。"
+        md = (
+            f"# {theme}\n\n"
+            "Tavily の API キーが未設定です。GitHub → Settings → Secrets and variables → Actions に "
+            "`TAVILY_API_KEY` を追加してください。"
+        )
         write_markdown(md, theme)
         write_html_from_markdown(md, theme)
         rebuild_articles_index()
@@ -133,13 +169,14 @@ def main():
     researcher = Researcher(tavily_api_key=tavily_key)
     try:
         print("[info] collecting sources via Tavily ...")
-        docs: List[Dict] = researcher.collect(theme, max_results=8)
+        # 検索精度強化：複数クエリの自動拡張・品質ブースト・重複排除を内部で実施
+        docs: List[Dict] = researcher.collect(theme, max_results=14, weekend=(now_local().weekday() >= 5))
         if not docs:
             print("[warn] docs empty; retry with expanded query")
-            docs = researcher.collect(f"{theme} 最新 動向 企業 規制 投資 発表", max_results=8)
+            docs = researcher.collect(f"{theme} 最新 動向 企業 規制 投資 提携 ロードマップ ベンチマーク", max_results=14)
         # ログにURLだけ出す
         summary = [{"title": d.get("title"), "url": d.get("url")} for d in docs]
-        print(f"[debug] sources: {json.dumps(summary, ensure_ascii=False)[:1000]}")
+        print(f"[debug] sources: {json.dumps(summary, ensure_ascii=False)[:2000]}")
     except Exception as e:
         print(f"[error] tavily collect failed: {e}", file=sys.stderr)
         docs = []
@@ -147,7 +184,7 @@ def main():
     # 3) Claude で深掘り
     try:
         print("[info] calling Claude analyzer ...")
-        analyzer = DeepAnalyzer()  # analyze_claude.py 既定は haiku 推奨
+        analyzer = DeepAnalyzer()  # 既存と互換
         md: str = analyzer.analyze(theme, docs)
         print(f"[debug] Claude output length = {len(md) if md else 0}")
         if not md or len(md.strip()) < 100:
