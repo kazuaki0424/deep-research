@@ -71,12 +71,30 @@ class DeepAnalyzer:
             "claude-3-haiku-20240307",
             "claude-3-opus-20240229",
         ]
+        # モデル別の安全な出力トークン上限
+        self.model_token_caps = {
+            "haiku": 4096,
+            "sonnet": 8000,  # 実運用の上限に合わせて必要なら調整
+            "opus": 8000,
+        }
+
+    def _cap_for_model(self, model: str, desired: int) -> int:
+        name = model.lower()
+        for key, cap in self.model_token_caps.items():
+            if key in name:
+                return min(desired, cap)
+        # 未知モデルは保守的に4k
+        return min(desired, 4000)
 
     def _try_call(self, model: str, theme: str, sources_block: str) -> str:
+        # ご希望の出力量（高密度）を確保しつつ、モデルごとの上限で丸める
+        desired_tokens = 5000
+        max_tokens = self._cap_for_model(model, desired_tokens)
+
         msg = self.client.messages.create(
             model=model,
-            max_tokens=5000,    # 情報密度を確保
-            temperature=0.3,    # ばらつきを抑え、一貫性・ファクト志向に
+            max_tokens=max_tokens,
+            temperature=0.3,  # 一貫性重視
             system=ANALYSIS_SYSTEM,
             messages=[{"role": "user", "content": USER_TMPL.format(theme=theme, sources=sources_block)}],
         )
