@@ -3,16 +3,15 @@ name: Nightly Deep Research Articles
 on:
   # 手動実行
   workflow_dispatch:
-  # 毎日実行（UTC 21:00 = JST 06:00）
+  # 毎日 06:00 JST に実行（21:00 UTC）
   schedule:
     - cron: "0 21 * * *"
 
 permissions:
-  contents: read         # リポジトリを読む
-  pages: write           # GitHub Pages へ書き込み
-  id-token: write        # OIDC でのデプロイに必須
+  contents: read
+  pages: write
+  id-token: write
 
-# Pages デプロイは同時に1つだけ走るように
 concurrency:
   group: "pages"
   cancel-in-progress: true
@@ -34,20 +33,15 @@ jobs:
           python -m pip install -U pip
           python -m pip install -r requirements.txt
 
-      - name: Create .env from secrets
-        # （リポジトリにコミットされない一時ファイル）
-        run: |
-          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env
-          echo "TAVILY_API_KEY=${{ secrets.TAVILY_API_KEY }}"       >> .env
-
       - name: Prepare output dir
         run: |
           rm -rf public
           mkdir -p public/articles
-          # 既存のトップページ（public/index.html）がある場合は温存するならここで再生成/コピーを実施
-          # 例）[任意] テンプレを使うなら echo '...' > public/index.html
 
-      - name: Generate nightly article (MD/HTML + articles index)
+      - name: Run nightly article job
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TAVILY_API_KEY:    ${{ secrets.TAVILY_API_KEY }}
         run: python -m src.main_article
 
       - name: List outputs
