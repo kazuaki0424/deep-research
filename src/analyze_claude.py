@@ -39,7 +39,7 @@ def format_sources(docs: List[Dict]) -> str:
 class DeepAnalyzer:
     """Claudeに深掘り分析を依頼してMarkdownを返すクラス。"""
 
-    def __init__(self, api_key: str | None = None, model: str = "claude-3-5-sonnet-latest"):
+    def __init__(self, api_key: str | None = None, model: str = "claude-3-5-sonnet-20240620"):
         self.client = Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
         self.model = model
 
