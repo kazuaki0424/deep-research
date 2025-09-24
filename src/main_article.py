@@ -5,6 +5,10 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
+# 追加: メール送信用
+import smtplib
+from email.message import EmailMessage
+
 # 相対インポート（python -m src.main_article で動く）
 from .research import Researcher
 from .analyze_claude import DeepAnalyzer
@@ -141,6 +145,40 @@ def rebuild_articles_index():
     (articles_dir / "index.html").write_text(html, encoding="utf-8")
     print(f"[ok] rebuilt index: {articles_dir/'index.html'}")
 
+# ===== メール送信ユーティリティ =====
+def send_email_html(subject: str, html_body: str, recipients: list[str]):
+    """
+    STARTTLS + SMTP 認証でHTMLメールを送信。
+    必要な環境変数:
+      - SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
+      - NEWSLETTER_FROM (差出人メールアドレス)
+    宛先: recipients（リスト）。NEWSLETTER_TO（カンマ区切り）を分解して渡す想定。
+    """
+    host = os.getenv("SMTP_HOST")
+    port = int(os.getenv("SMTP_PORT", "587"))
+    user = os.getenv("SMTP_USER")
+    pwd  = os.getenv("SMTP_PASS")
+    sender = os.getenv("NEWSLETTER_FROM")
+
+    if not all([host, port, user, pwd, sender]) or not recipients:
+        print("[warn] email settings incomplete; skip sending")
+        return
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = ", ".join(recipients)
+    # プレーンテキスト（フォールバック）
+    msg.set_content("本文はHTMLでお届けしています。HTML版をご覧ください。")
+    # HTML本文（記事ページそのまま）
+    msg.add_alternative(html_body, subtype="html")
+
+    with smtplib.SMTP(host, port) as s:
+        s.starttls()
+        s.login(user, pwd)
+        s.send_message(msg)
+        print(f"[ok] sent email to {recipients}")
+
 # ===== メイン処理 =====
 def main():
     print("[info] start main_article")
@@ -161,8 +199,9 @@ def main():
             "`TAVILY_API_KEY` を追加してください。"
         )
         write_markdown(md, theme)
-        write_html_from_markdown(md, theme)
+        html_path = write_html_from_markdown(md, theme)
         rebuild_articles_index()
+        # Tavily未設定でもメール送信はスキップで終了
         print("[info] done main_article (no tavily key)")
         return
 
@@ -199,8 +238,20 @@ def main():
 
     # 4) 保存（.md と .html） + 一覧更新
     write_markdown(md, theme)
-    write_html_from_markdown(md, theme)
+    html_path = write_html_from_markdown(md, theme)
     rebuild_articles_index()
+
+    # 5) メール送信（HTML本文）
+    to_list = [s.strip() for s in os.getenv("NEWSLETTER_TO", "").split(",") if s.strip()]
+    try:
+        html_body = html_path.read_text(encoding="utf-8")
+        subject = extract_title(md) or theme
+        if to_list:
+            send_email_html(subject, html_body, to_list)
+        else:
+            print("[info] NEWSLETTER_TO is empty; skip email")
+    except Exception as e:
+        print(f"[error] failed to send email: {e}", file=sys.stderr)
 
     print("[info] done main_article")
 
